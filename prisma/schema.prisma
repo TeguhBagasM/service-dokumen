@@ -1,0 +1,23 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Dokumen {
+  id              Int      @id @default(autoincrement())
+  uuid            String   @unique @default(uuid())
+  namaFileAsli    String   @map("nama_file_asli") @db.VarChar(255)
+  tipeMime        String   @map("tipe_mime") @db.VarChar(100)
+  ekstensi        String   @db.VarChar(10)
+  ukuran          Int      @db.Integer
+  path            String   @db.VarChar(500)
+  pendaftaranId   Int      @map("pendaftaran_id")
+  userId          Int      @map("user_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("dokumen")
+}
