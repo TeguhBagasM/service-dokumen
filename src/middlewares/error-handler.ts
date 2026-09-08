@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 import { AppError } from "../utils/AppError.js";
+import { ServiceUnavailableError } from "../utils/ServiceUnavailableError.js";
 import { MulterError } from "multer";
 
 export function notFoundHandler(req: Request, res: Response) {
@@ -23,6 +24,11 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
       message: "Validasi gagal",
       errors: err.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
     });
+    return;
+  }
+
+  if (err instanceof ServiceUnavailableError) {
+    res.status(503).json({ success: false, message: err.message });
     return;
   }
 

@@ -4,7 +4,7 @@ import { mkdir, writeFile, unlink } from "node:fs/promises";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
-import { verifyOwnership } from "../../services/transaksi-service-client.js";
+import { verifyOwnership, isApplicantRole } from "../../services/transaksi-service-client.js";
 import type { UploadDokumenInput } from "./schema.js";
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -24,12 +24,6 @@ const EXTENSION_MAP: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
 };
-
-const PRIVILEGED_ROLES = ["admin", "verifikator", "lembaga_seleksi"];
-
-function isPrivileged(roleName: string): boolean {
-  return PRIVILEGED_ROLES.some((r) => r.toLowerCase() === roleName.toLowerCase());
-}
 
 function detectMimeType(buffer: Buffer): string | null {
   for (const [mimeType, signatures] of Object.entries(MAGIC_SIGNATURES)) {
@@ -71,9 +65,8 @@ export async function uploadDokumen(
     throw new AppError(400, "Tipe file tidak didukung");
   }
 
-  const owner = await verifyOwnership(input.pendaftaranId);
-
-  if (!isPrivileged(userRoleName) && owner.applicantId !== userId) {
+  const isOwner = await verifyOwnership(input.pendaftaranId, userId, userRoleName);
+  if (!isOwner) {
     throw new AppError(403, "Anda tidak memiliki akses untuk mengupload dokumen pada pendaftaran ini");
   }
 
@@ -104,9 +97,8 @@ export async function listDokumen(
   userRoleName: string,
 ) {
   if (pendaftaranId) {
-    const owner = await verifyOwnership(pendaftaranId);
-
-    if (!isPrivileged(userRoleName) && owner.applicantId !== userId) {
+    const isOwner = await verifyOwnership(pendaftaranId, userId, userRoleName);
+    if (!isOwner) {
       throw new AppError(403, "Anda tidak memiliki akses untuk melihat dokumen pada pendaftaran ini");
     }
 
@@ -116,14 +108,14 @@ export async function listDokumen(
     });
   }
 
-  if (isPrivileged(userRoleName)) {
-    return prisma.dokumen.findMany({ orderBy: { createdAt: "desc" } });
+  if (isApplicantRole(userRoleName)) {
+    return prisma.dokumen.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+    });
   }
 
-  return prisma.dokumen.findMany({
-    where: { userId },
-    orderBy: { createdAt: "desc" },
-  });
+  return prisma.dokumen.findMany({ orderBy: { createdAt: "desc" } });
 }
 
 export async function getDokumenById(id: number, userId: number, userRoleName: string) {
@@ -132,9 +124,8 @@ export async function getDokumenById(id: number, userId: number, userRoleName: s
     throw new AppError(404, "Dokumen tidak ditemukan");
   }
 
-  const owner = await verifyOwnership(dokumen.pendaftaranId);
-
-  if (!isPrivileged(userRoleName) && owner.applicantId !== userId) {
+  const isOwner = await verifyOwnership(dokumen.pendaftaranId, userId, userRoleName);
+  if (!isOwner) {
     throw new AppError(403, "Anda tidak memiliki akses untuk melihat dokumen ini");
   }
 
@@ -147,9 +138,8 @@ export async function deleteDokumen(id: number, userId: number, userRoleName: st
     throw new AppError(404, "Dokumen tidak ditemukan");
   }
 
-  const owner = await verifyOwnership(dokumen.pendaftaranId);
-
-  if (!isPrivileged(userRoleName) && owner.applicantId !== userId) {
+  const isOwner = await verifyOwnership(dokumen.pendaftaranId, userId, userRoleName);
+  if (!isOwner) {
     throw new AppError(403, "Anda tidak memiliki akses untuk menghapus dokumen ini");
   }
 

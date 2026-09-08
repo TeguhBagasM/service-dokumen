@@ -19,7 +19,7 @@ export async function upload(req: Request, res: Response) {
 }
 
 export async function list(req: Request, res: Response) {
-  const query = req.query as ListDokumenQuery;
+  const query = (req.validatedQuery ?? {}) as ListDokumenQuery;
 
   const result = await dokumenService.listDokumen(
     query.pendaftaranId,

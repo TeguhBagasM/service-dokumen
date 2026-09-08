@@ -6,6 +6,7 @@ declare global {
         roleId: number;
         roleName: string;
       };
+      validatedQuery?: Record<string, unknown>;
     }
   }
 }
