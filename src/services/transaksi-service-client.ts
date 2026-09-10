@@ -3,29 +3,20 @@ import { AppError } from "../utils/AppError.js";
 import { ServiceUnavailableError } from "../utils/ServiceUnavailableError.js";
 
 const APPLICANT_ROLE = "applicant";
-const OWNERSHIP_TIMEOUT_MS = 5000;
+const INTERNAL_TIMEOUT_MS = 5000;
 
 export function isApplicantRole(roleName: string): boolean {
   return roleName.toLowerCase() === APPLICANT_ROLE;
 }
 
-export async function verifyOwnership(
-  pendaftaranId: number,
-  requestUserId: number,
-  requestUserRole: string,
-): Promise<boolean> {
-  if (!isApplicantRole(requestUserRole)) {
-    return true;
-  }
+async function internalRequest(path: string): Promise<Response> {
+  const url = `${env.TRANSAKSI_SERVICE_URL}${path}`;
 
-  const url = `${env.TRANSAKSI_SERVICE_URL}/internal/pendaftaran/${pendaftaranId}/owner`;
-
-  let response: Response;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), OWNERSHIP_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), INTERNAL_TIMEOUT_MS);
     try {
-      response = await fetch(url, {
+      return await fetch(url, {
         method: "GET",
         headers: {
           "X-Internal-Service-Key": env.INTERNAL_SERVICE_KEY,
@@ -40,25 +31,50 @@ export async function verifyOwnership(
       "Service Transaksi tidak dapat dihubungi. Tidak dapat memverifikasi kepemilikan pendaftaran.",
     );
   }
+}
 
+async function readData(response: Response): Promise<{ success: boolean; data?: unknown }> {
   if (response.status === 404) {
     throw new AppError(404, "Pendaftaran tidak ditemukan");
   }
-
   if (!response.ok) {
     throw new ServiceUnavailableError(
       "Service Transaksi tidak dapat dihubungi. Tidak dapat memverifikasi kepemilikan pendaftaran.",
     );
   }
+  const body = (await response.json()) as { success: boolean; data?: unknown };
+  if (!body.success) {
+    throw new ServiceUnavailableError("Response tidak valid dari Service Transaksi");
+  }
+  return body;
+}
 
-  const body = (await response.json()) as {
-    success: boolean;
-    data?: { applicantId?: number };
-  };
+export async function verifyOwnership(
+  pendaftaranId: number,
+  requestUserId: number,
+  requestUserRole: string,
+): Promise<boolean> {
+  if (!isApplicantRole(requestUserRole)) {
+    return true;
+  }
 
-  if (!body.success || typeof body.data?.applicantId !== "number") {
+  const body = await readData(await internalRequest(`/internal/pendaftaran/${pendaftaranId}/owner`));
+
+  const applicantId = (body.data as { applicantId?: unknown } | undefined)?.applicantId;
+  if (typeof applicantId !== "number") {
     throw new ServiceUnavailableError("Response tidak valid dari Service Transaksi");
   }
 
-  return body.data.applicantId === requestUserId;
+  return applicantId === requestUserId;
+}
+
+export async function getPendaftaranStatus(pendaftaranId: number): Promise<string> {
+  const body = await readData(await internalRequest(`/internal/pendaftaran/${pendaftaranId}/status`));
+
+  const status = (body.data as { status?: unknown } | undefined)?.status;
+  if (typeof status !== "string") {
+    throw new ServiceUnavailableError("Response tidak valid dari Service Transaksi");
+  }
+
+  return status;
 }

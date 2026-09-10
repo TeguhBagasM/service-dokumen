@@ -1,25 +1,18 @@
 import { Router } from "express";
-import multer from "multer";
 import { authenticate } from "../../middlewares/authenticate.js";
-import { validateBody, validateParams, validateQuery } from "../../middlewares/validate.js";
+import { upload } from "../../middlewares/upload.js";
+import { validateBody, validateParams } from "../../middlewares/validate.js";
 import { uploadRateLimiter } from "../../middlewares/rate-limit.js";
 import { idParamSchema } from "../../utils/schemas.js";
-import { uploadDokumenSchema, listDokumenQuerySchema } from "./schema.js";
+import { uploadDokumenSchema, pendaftaranIdParamSchema } from "./schema.js";
 import * as controller from "./controller.js";
 
 const router = Router();
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 5 * 1024 * 1024,
-  },
-});
-
 router.use(authenticate);
 
 router.post(
-  "/",
+  "/upload",
   uploadRateLimiter,
   upload.single("file"),
   validateBody(uploadDokumenSchema),
@@ -27,15 +20,15 @@ router.post(
 );
 
 router.get(
-  "/",
-  validateQuery(listDokumenQuerySchema),
-  controller.list,
+  "/pendaftaran/:pendaftaranId",
+  validateParams(pendaftaranIdParamSchema),
+  controller.listByPendaftaran,
 );
 
 router.get(
-  "/:id",
+  "/:id/file",
   validateParams(idParamSchema),
-  controller.getById,
+  controller.streamById,
 );
 
 router.delete(

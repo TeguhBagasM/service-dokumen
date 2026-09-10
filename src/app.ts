@@ -23,7 +23,7 @@ export function createApp() {
     res.json({ status: "ok", service: "service-dokumen" });
   });
 
-  app.use("/dokumen/dokumen", dokumenRoutes);
+  app.use("/dokumen", dokumenRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

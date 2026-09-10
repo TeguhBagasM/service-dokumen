@@ -7,17 +7,17 @@ datasource db {
 }
 
 model Dokumen {
-  id              Int      @id @default(autoincrement())
-  uuid            String   @unique @default(uuid())
-  namaFileAsli    String   @map("nama_file_asli") @db.VarChar(255)
-  tipeMime        String   @map("tipe_mime") @db.VarChar(100)
-  ekstensi        String   @db.VarChar(10)
-  ukuran          Int      @db.Integer
-  path            String   @db.VarChar(500)
-  pendaftaranId   Int      @map("pendaftaran_id")
-  userId          Int      @map("user_id")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id                Int      @id @default(autoincrement())
+  pendaftaranId     Int      @map("pendaftaran_id") // dari service-transaksi, bukan relasi FK Prisma (beda database)
+  jenisDokumen      String   @db.VarChar(100) @map("jenis_dokumen")
+  namaFileAsli      String   @db.VarChar(255) @map("nama_file_asli") // hanya untuk tampilan, tidak dipakai sebagai path disk
+  namaFileTersimpan String   @db.VarChar(255) @map("nama_file_tersimpan") // uuid + ekstensi, nama fisik di disk
+  mimeType          String   @db.VarChar(100) @map("mime_type")
+  ukuranBytes       Int      @db.Integer @map("ukuran_bytes")
+  uploadedBy        Int      @map("uploaded_by") // dari service RBAC
+  uploadedAt        DateTime @default(now()) @map("uploaded_at")
+  createdAt         DateTime @default(now()) @map("created_at")
 
+  @@index([pendaftaranId])
   @@map("dokumen")
 }

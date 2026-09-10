@@ -1,48 +1,34 @@
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { mkdir, writeFile, unlink } from "node:fs/promises";
+import { stat, unlink } from "node:fs/promises";
+import { fileTypeFromFile } from "file-type";
+import type { Dokumen } from "@prisma/client";
 import { prisma } from "../../config/prisma.js";
 import { env } from "../../config/env.js";
 import { AppError } from "../../utils/AppError.js";
-import { verifyOwnership, isApplicantRole } from "../../services/transaksi-service-client.js";
+import {
+  verifyOwnership,
+  isApplicantRole,
+  getPendaftaranStatus,
+} from "../../services/transaksi-service-client.js";
 import type { UploadDokumenInput } from "./schema.js";
 
-const ALLOWED_MIME_TYPES = new Set([
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-]);
-
-const MAGIC_SIGNATURES: Record<string, number[][]> = {
-  "application/pdf": [[0x25, 0x50, 0x44, 0x46]],
-  "image/jpeg": [[0xff, 0xd8, 0xff]],
-  "image/png": [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
-};
-
-const EXTENSION_MAP: Record<string, string> = {
-  "application/pdf": ".pdf",
-  "image/jpeg": ".jpg",
-  "image/png": ".png",
-};
-
-function detectMimeType(buffer: Buffer): string | null {
-  for (const [mimeType, signatures] of Object.entries(MAGIC_SIGNATURES)) {
-    for (const sig of signatures) {
-      if (buffer.length >= sig.length && sig.every((byte, i) => buffer[i] === byte)) {
-        return mimeType;
-      }
-    }
-  }
-  return null;
-}
+const DELETEABLE_STATUSES = new Set(["draft", "revisi_diminta"]);
 
 export interface MulterFile {
   fieldname: string;
   originalname: string;
-  encoding: string;
   mimetype: string;
   size: number;
-  buffer: Buffer;
+  path: string;
+  filename: string;
+  destination: string;
+}
+
+type DokumenView = Omit<Dokumen, "namaFileTersimpan">;
+
+function toDokumenView(d: Dokumen): DokumenView {
+  const { namaFileTersimpan: _namaFileTersimpan, ...view } = d;
+  return view;
 }
 
 export async function uploadDokumen(
@@ -55,70 +41,55 @@ export async function uploadDokumen(
     throw new AppError(400, "File wajib diupload");
   }
 
-  const detectedMime = detectMimeType(file.buffer);
-  if (!detectedMime || !ALLOWED_MIME_TYPES.has(detectedMime)) {
-    throw new AppError(400, "Tipe file tidak diizinkan. Hanya PDF, JPG, JPEG, PNG yang diperbolehkan");
+  try {
+    const isOwner = await verifyOwnership(input.pendaftaranId, userId, userRoleName);
+    if (!isOwner) {
+      throw new AppError(403, "Anda tidak memiliki akses untuk mengupload dokumen pada pendaftaran ini");
+    }
+
+    const detected = await fileTypeFromFile(file.path);
+    if (!detected || detected.mime !== file.mimetype) {
+      throw new AppError(400, "Tipe file tidak sesuai isi sebenarnya. Hanya PDF, JPG, PNG yang diperbolehkan");
+    }
+
+    const dokumen = await prisma.dokumen.create({
+      data: {
+        pendaftaranId: input.pendaftaranId,
+        jenisDokumen: input.jenisDokumen,
+        namaFileAsli: file.originalname,
+        namaFileTersimpan: file.filename,
+        mimeType: detected.mime,
+        ukuranBytes: file.size,
+        uploadedBy: userId,
+      },
+    });
+
+    return toDokumenView(dokumen);
+  } catch (err) {
+    await unlink(file.path).catch(() => {});
+    throw err;
   }
-
-  const ext = EXTENSION_MAP[detectedMime];
-  if (!ext) {
-    throw new AppError(400, "Tipe file tidak didukung");
-  }
-
-  const isOwner = await verifyOwnership(input.pendaftaranId, userId, userRoleName);
-  if (!isOwner) {
-    throw new AppError(403, "Anda tidak memiliki akses untuk mengupload dokumen pada pendaftaran ini");
-  }
-
-  const filename = `${randomUUID()}${ext}`;
-
-  const uploadDir = join(process.cwd(), env.UPLOAD_DIR);
-  await mkdir(uploadDir, { recursive: true });
-  await writeFile(join(uploadDir, filename), file.buffer);
-
-  const dokumen = await prisma.dokumen.create({
-    data: {
-      namaFileAsli: file.originalname,
-      tipeMime: detectedMime,
-      ekstensi: ext,
-      ukuran: file.size,
-      path: filename,
-      pendaftaranId: input.pendaftaranId,
-      userId,
-    },
-  });
-
-  return dokumen;
 }
 
-export async function listDokumen(
-  pendaftaranId: number | undefined,
+export async function listDokumenByPendaftaran(
+  pendaftaranId: number,
   userId: number,
   userRoleName: string,
 ) {
-  if (pendaftaranId) {
-    const isOwner = await verifyOwnership(pendaftaranId, userId, userRoleName);
-    if (!isOwner) {
-      throw new AppError(403, "Anda tidak memiliki akses untuk melihat dokumen pada pendaftaran ini");
-    }
-
-    return prisma.dokumen.findMany({
-      where: { pendaftaranId },
-      orderBy: { createdAt: "desc" },
-    });
+  const isOwner = await verifyOwnership(pendaftaranId, userId, userRoleName);
+  if (!isOwner) {
+    throw new AppError(403, "Anda tidak memiliki akses untuk melihat dokumen pada pendaftaran ini");
   }
 
-  if (isApplicantRole(userRoleName)) {
-    return prisma.dokumen.findMany({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-    });
-  }
+  const dokumen = await prisma.dokumen.findMany({
+    where: { pendaftaranId },
+    orderBy: { createdAt: "desc" },
+  });
 
-  return prisma.dokumen.findMany({ orderBy: { createdAt: "desc" } });
+  return dokumen.map(toDokumenView);
 }
 
-export async function getDokumenById(id: number, userId: number, userRoleName: string) {
+export async function getDokumenFile(id: number, userId: number, userRoleName: string) {
   const dokumen = await prisma.dokumen.findUnique({ where: { id } });
   if (!dokumen) {
     throw new AppError(404, "Dokumen tidak ditemukan");
@@ -126,10 +97,19 @@ export async function getDokumenById(id: number, userId: number, userRoleName: s
 
   const isOwner = await verifyOwnership(dokumen.pendaftaranId, userId, userRoleName);
   if (!isOwner) {
-    throw new AppError(403, "Anda tidak memiliki akses untuk melihat dokumen ini");
+    throw new AppError(403, "Anda tidak memiliki akses untuk mengunduh dokumen ini");
   }
 
-  return dokumen;
+  const filePath = join(process.cwd(), env.UPLOAD_DIR, dokumen.namaFileTersimpan);
+  const exists = await stat(filePath)
+    .then(() => true)
+    .catch(() => false);
+
+  if (!exists) {
+    throw new AppError(404, "File fisik dokumen tidak ditemukan di penyimpanan, meskipun metadata masih tercatat. Hubungi administrator.");
+  }
+
+  return { dokumen, filePath };
 }
 
 export async function deleteDokumen(id: number, userId: number, userRoleName: string) {
@@ -138,15 +118,33 @@ export async function deleteDokumen(id: number, userId: number, userRoleName: st
     throw new AppError(404, "Dokumen tidak ditemukan");
   }
 
-  const isOwner = await verifyOwnership(dokumen.pendaftaranId, userId, userRoleName);
-  if (!isOwner) {
-    throw new AppError(403, "Anda tidak memiliki akses untuk menghapus dokumen ini");
+  if (!isApplicantRole(userRoleName)) {
+    throw new AppError(403, "Hanya applicant pemilik dokumen yang dapat menghapus dokumen");
   }
 
-  const uploadDir = join(process.cwd(), env.UPLOAD_DIR);
-  await unlink(join(uploadDir, dokumen.path)).catch(() => {});
+  const isOwner = await verifyOwnership(dokumen.pendaftaranId, userId, userRoleName);
+  if (!isOwner) {
+    throw new AppError(403, "Anda bukan pemilik dokumen ini");
+  }
 
-  await prisma.dokumen.delete({ where: { id } });
+  const status = await getPendaftaranStatus(dokumen.pendaftaranId);
+  if (!DELETEABLE_STATUSES.has(status)) {
+    throw new AppError(409, "Dokumen hanya dapat dihapus saat pendaftaran berstatus draft atau revisi_diminta");
+  }
 
-  return dokumen;
+  const filePath = join(process.cwd(), env.UPLOAD_DIR, dokumen.namaFileTersimpan);
+
+  await unlink(filePath).catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== "ENOENT") {
+      throw new AppError(500, "Gagal menghapus file fisik. Metadata tetap utuh, silakan coba lagi.");
+    }
+  });
+
+  try {
+    await prisma.dokumen.delete({ where: { id } });
+  } catch {
+    throw new AppError(500, "File fisik sudah terhapus tetapi metadata gagal dihapus. Metadata dapat dibersihkan ulang.");
+  }
+
+  return toDokumenView(dokumen);
 }
