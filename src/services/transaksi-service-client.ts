@@ -6,7 +6,9 @@ const APPLICANT_ROLE = "applicant";
 const INTERNAL_TIMEOUT_MS = 5000;
 
 export function isApplicantRole(roleName: string): boolean {
-  return roleName.toLowerCase() === APPLICANT_ROLE;
+  const normalized = roleName.toLowerCase();
+  // Role applicant bernama "Calon Peserta" (payload JWT dari service-rbac).
+  return normalized === "calon peserta" || normalized === APPLICANT_ROLE;
 }
 
 async function internalRequest(path: string): Promise<Response> {
